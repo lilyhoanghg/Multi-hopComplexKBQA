@@ -139,7 +139,7 @@ def Load_KB_Files(KB_file):
     """Load knowledge base related files.
     KB_file: {ent: {rel: {ent}}}; M2N_file: {mid: name}; QUERY_file: set(queries)
     """
-    KB = json.load(open(KB_file, "r"))
+    KB = json.load(open(KB_file, "r", encoding="utf-8"))
     return KB
 
 def Save_KB_Files(KB, KB_file):
@@ -189,19 +189,26 @@ def check_answer(raw_answer):
             else:
                 return 0
 
+metaqa2_rel = ["starred_actor", "release_year", "starred_actor_inverse"]
+
 def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=1000, time = 0, is_train = False, save_model='SO'):
     '''Retrieve subgraphs from the KB based on current topic entities'''
     te, c_te, hn = batch.topic_entity, batch.current_topic_entity, batch.hop_number
     raw_candidate_paths, paths, batch.orig_F1s ={}, {}, []
     hn_mark, query_num = 0, 0
+    #print("time: {}".format(time))
+    #print("raw_candidate_paths 1: {}.".format(raw_candidate_paths))
     if time > 0:
         for h_idx, h in enumerate(c_te):
             update_raw_candidate_paths(c_te[h], [h], c_te[h], raw_candidate_paths, batch, time)
         batch.previous_action_num = len(raw_candidate_paths)
+    #print("raw_candidate_paths 2: {}.".format(raw_candidate_paths))
+
     for previous_path in set(c_te.values()):
         raw_paths, queries = {}, set()
         if previous_path in KB:
             paths = KB[previous_path]
+        # print("paths: {}.".format(paths))
         if time:
             if tokenizer.dataset in ['CWQ'] and time < 2: #(tokenizer.dataset in ['CWQ'] and time < 2) or (len(paths) == 0 and time==0): #(tokenizer.dataset in ['CWQ'] and time < 2) or
                 ''' Single hop relations, remove this when WBQ '''
@@ -212,6 +219,7 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
                 if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
         if time:
             ''' Constraint relations via entities, time, min max'''
+            if tokenizer.dataset in ['METAQA2']: continue
             overlap_te = set([mid for mid in te if te[mid][1] == te[previous_path[0][0]][1]]) if tokenizer.dataset in ['CQ'] else set([mid for mid in sum(previous_path, ()) if re.search('^[mg]\.', mid)]) #
             const = set(te.keys()) - overlap_te
             #print(te); print(const); print(batch.const_time); print(batch.const_minimax); print(batch.const_type)
@@ -235,22 +243,25 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         for raw_path in paths:
             path = raw_path
             update_raw_candidate_paths(path, paths[raw_path], previous_path, raw_candidate_paths, batch, time)
-
+    #print("raw_candidate_paths 3: {}.".format(raw_candidate_paths))
     '''Process the candidate paths'''
     candidate_paths, topic_scores, topic_numbers, answer_numbers, type_numbers, superlative_numbers, year_numbers, hop_numbers, F1s, RAs = [], [], [], [], [], [], [], [], [], []
     max_cp_length, types = 0, []
     limit_number = train_limit_number
     for p_idx, p in enumerate(raw_candidate_paths):
-        CWQ_F1 = generate_F1_tmp(clean_answer(raw_candidate_paths[p]), batch.answer) if tokenizer.dataset in ['CWQ', 'WBQ'] else 0.
+        CWQ_F1 = generate_F1_tmp(clean_answer(raw_candidate_paths[p]), batch.answer) if tokenizer.dataset in ['CWQ', 'WBQ', 'METAQA2'] else 0.
+        #print("F1 for path {}: {}.".format(p, CWQ_F1))
         if (not is_train) or (np.random.random() < (limit_number*1./len(raw_candidate_paths))) or CWQ_F1 > 0.5:
             '''If answer equals to topic entities'''
             if raw_candidate_paths[p] == set([p[0][0]]) or not check_answer(raw_candidate_paths[p]): continue #
             path, topic_score, p_tmp, topic_number, type_number, superlative_number, year_number, contain_minimax, skip = [], 0., (), 0., 0., 0., 0., False, False
+            #print(sum(p, ()))
+            
             for w in sum(p, ()):
                 if not re.search('^\?', w):
                     p_tmp += (w, )
                     if re.search('\d+-\d+-\d+', w): w = w.split('-')[0] # When it's a datetime, only use year
-                    if re.search('^[mg]\.', w): # When it's a mid
+                    if re.search('^[mg]\.', w) or ("entity" in w) or ("movie" in w): # When it's a mid
                         if w not in M2N: update_m2n(w, M2N)
                         if (w in M2N): path.append(M2N[w]) # 'e' #
                         topic_score += 0. if w not in te else te[w][0] if tokenizer.dataset in ['CQ'] else te[w] # if M2N[w] in batch.raw_question
@@ -261,25 +272,40 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
                             type_number += 1.
                         elif not contain_minimax:
                             skip = True # When it's a mid that doesn't belong to the question
+                        #print("skip 1: {}".format(skip))
                     elif len(w.split('.')) > 2:  # When it's a relation
                         path += w.split('.')[-1].split('_')
-                    elif not w.isdigit(): # When it's superlative
+                    elif w in metaqa2_rel:  # When it's a relation in metaqa2
+                        path += w.split('_')
+                        #print(path)
+
+                    elif not w.isdigit() and (w not in metaqa2_rel): # When it's superlative
+                        #print(batch.const_minimax)
                         if (batch.const_minimax is not None) and w in set(batch.const_minimax):
                             path.append(w); contain_minimax = True; superlative_number += 1.
                         else:
                             skip = True
+                        #print("skip 2: {}".format(skip))
                     elif (not contain_minimax): # When it's a year
                         if (batch.const_time is not None) and w in set(batch.const_time):
                             path.append(w); year_number += 1.
                         else:
                             skip = True
+                        #print("skip 3: {}".format(skip))
+
+            
+            #print("skip: {}".format(skip))
             if skip: continue
             if check_answer(raw_candidate_paths[p]) == 2: path.append('date')
             batch.candidate_paths += [p]
             path = tokenizer.tokenize(' '.join(path))
             #print(p, path)
             path = tokenizer.convert_tokens_to_ids(path)
+            #print(p, path)
+
             batch.candidate_answers += [clean_answer(raw_candidate_paths[p])]
+            #print(batch.candidate_answers)
+            
             answer = np.log(len(raw_candidate_paths[p]))
 
             '''Append features for ranking'''
@@ -300,7 +326,7 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
             else:
                 answer = clean_answer(raw_candidate_paths[p])
 
-            # if (tokenizer.dataset in ['CWQ'] and time == 0): #I changed this! , 'WBQ'
+            # if (tokenizer.dataset in ['CWQ', 'METAQA2'] and time == 0): #I changed this! , 'WBQ'
             #     F1 = generate_Acc_tmp(p_tmp, batch.golden_graph[:len(p_tmp)] if time == 0 else batch.golden_graph)
             # else:
             F1 = generate_F1_tmp(answer, batch.answer)
@@ -321,6 +347,7 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
     batch.current_F1s /= np.sum(batch.current_F1s)
     batch.F1s /= np.sum(batch.F1s)
     stop = True if (len(candidate_paths) and time > 0) else False
+    
     return candidate_paths, topic_scores, topic_numbers, type_numbers, superlative_numbers, year_numbers, answer_numbers, hop_numbers, RAs, max_cp_length, query_num, stop
 
 def select_field(q, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, is_train=False, method='Bert', save_model='SO'):
@@ -426,6 +453,7 @@ def generate_F1(logits, action, batch, time = 0, is_train = True, eval_metric = 
 
     max_index  = np.argmax(logits)
     ca, ans, pred_cp, cp = batch.candidate_answers, batch.answer, None, batch.candidate_paths
+
     if not is_train:
         if eval_metric in ['Hits1']:
             for a_idx, a in enumerate(action.reshape(-1)):
@@ -487,7 +515,8 @@ def update_policy(adjust_loss, policy, optimizer, batch, device = None, LM_loss 
         raw_rewards.insert(0, R)
 
     # Scale rewards
-    rewards = torch.FloatTensor(raw_rewards).transpose(1, 0)
+    # rewards = torch.FloatTensor(raw_rewards).transpose(1, 0)
+    rewards = torch.FloatTensor(np.array(raw_rewards)).transpose(1, 0)
     # rewards = rewards if len(raw_rewards) == 1 else (rewards-rewards.mean(-1).view(-1, 1)) / (rewards.std(-1).view(-1, 1)+np.finfo(np.float32).eps)
     #print(rewards)
     if device: rewards = Variable(rewards).to(device)
@@ -542,32 +571,27 @@ def main():
     parser.add_argument("--adjust_F1_weight", default=0.5, type=float, help="weight of adjust F1 score during training")
     parser.add_argument("--train_limit_number", default=150, type=int, help="the number of training instances")
     parser.add_argument("--max_hop_num", default=1, type=int, help="maximum hop number")
+    parser.add_argument("--cpu_only", default="no", type=str, help="use cpu only if yes")
     parser.add_argument("--do_policy_gradient", default=1, type=int, help="Whether to train with policy gradient. 1: use policy gradient; 2: use maximum likelihood with beam")
     args = parser.parse_args()
 
-    # # tests
-    # print("----------------------------")
-    # print("[lily] tests:")
-    # print(torch.cuda.is_available())
-    # print(torch.cuda.device_count())
-    # print(torch.cuda.current_device())
-    # print("----------------------------")
     
-    check_args_gpu_id = False
-    if isinstance(args.gpu_id, int): check_args_gpu_id = True
+    if isinstance(args.gpu_id, int): 
+        check_args_gpu_id = True
+    else: 
+        check_args_gpu_id = False
 
-
-    if torch.cuda.is_available():
-        logger.info("cuda {} is available".format(args.gpu_id))
-        print("torch.version.cuda: {}".format(torch.version.cuda))
-        print("torch.cuda.device_count(): {}".format(torch.cuda.device_count()))
-        print("torch.cuda.current_device(): {}".format(torch.cuda.current_device()))
-        device = torch.device("cuda", args.gpu_id) #
-        n_gpu = 1
-    else:
+    if args.cpu_only=="yes":
         device = None
-        logger.info("cuda is unavailable")
-
+        logger.info("using only cpu")
+    else:
+        if torch.cuda.is_available():
+            logger.info("cuda {} is available".format(args.gpu_id))
+            device = torch.device("cuda", args.gpu_id) #
+            n_gpu = 1
+        else:
+            device = None
+            logger.info("cuda is unavailable")
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -585,6 +609,10 @@ def main():
     save_query_cache = os.path.join(os.path.dirname(args.QUERY_file), "query_cache.json")
 
     tokenizer = Tokenizer(args.vocab_file)
+    print("tokenizer.dataset: {}.".format(tokenizer.dataset))
+    #if tokenizer.dataset == "METAQA2": 
+    #    tokenizer.dataset = "CWQ"
+    #    print("tokenizer.dataset changed to: {}.".format(tokenizer.dataset))
     KB = {} if args.do_eval == 2 else convert_json_to_load(Load_KB_Files(args.KB_file)) if args.KB_file else None
     M2N = {} if args.do_eval == 2 else Load_KB_Files(args.M2N_file)
     QUERY = set() if args.do_eval == 2 else set(Load_KB_Files(args.QUERY_file))
@@ -683,9 +711,9 @@ def main():
                                                           dataset=tokenizer.dataset, adjust_F1_weight = args.adjust_F1_weight) #True
                     if args.do_policy_gradient ==2: loss= update_policy_immediately(_adjust_loss, optimizer)
                     action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
-                    eval_metric = 'GraphAcc' if (time==0 and tokenizer.dataset in ['CWQ']) else 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
+                    eval_metric = 'GraphAcc' if (time==0 and tokenizer.dataset in ['CWQ', 'METAQA2']) else 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
                     reward, _, done, _, _ = generate_F1(logits, action, batch, time = time, is_train=True, eval_metric=eval_metric, M2N=M2N)
-                    if time== 0 and tokenizer.dataset in ['CWQ']: hop1_tr_reward += np.mean(reward)
+                    if time== 0 and tokenizer.dataset in ['CWQ', 'METAQA2']: hop1_tr_reward += np.mean(reward)
                     update_train_instance(batch, action)
 
                     # Save reward
@@ -724,46 +752,70 @@ def main():
             policy.eval()
             eval_reward, nb_eval_steps, nb_eval_examples = 0, 0, 0
             if args.do_eval == 2: dev_instances = dev_instances[:1]
-
+            
             for eval_step, batch in enumerate(dev_instances):
+                print("dev batch 1: {}".format(batch))
+                print("batch.candidate_answers: {}.".format(batch.candidate_answers))
+                input()
                 done, skip_forward, pred_cp = False, False, ''
                 time = 0
                 #print(eval_step)
+                print("time, max_hop_num: {}, {}.".format(time, args.max_hop_num))
                 while time < args.max_hop_num:
                     time1 = mytime.time()
+                    # this step is where the candidate answers are created.
                     cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, qr_n, done = retrieve_KB(batch, KB, QUERY, M2N, tokenizer, config.method, time = time)
                     query_num += qr_n
+                    # print("cp: {}.".format(cp))
+                    print("dev batch 2: {}".format(batch))
+                    print("len cp: {}.".format(len(cp)))
+                    print("len batch.candidate_answers: {}.".format(len(batch.candidate_answers)))
+                    
+
 
                     if len(cp) == 0: skip_forward = True; break
                     ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, method=config.method)
                     if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
-                    
+                    #print("dev ready_batch: {}".format(ready_batch))
+
+
                     # Step through environment using chosen action
                     with torch.no_grad():
                         _logits, _ = policy(ready_batch, None)
-                        print(_logits, _)
                     logits = _logits.cpu().data.numpy() if check_args_gpu_id else _logits.data.numpy()
+                    #print("logits: {}.".format(logits))
 
                     _action, _ = select_action(policy, _logits, is_train=False, k=args.top_k, dataset=tokenizer.dataset)
                     action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
+                    #print("action: {}.".format(action))
+                    input()
                     eval_metric = 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
-                    reward, pred_cp, done, _, _ = generate_F1(logits, action, batch, time = time, is_train = False, eval_metric=eval_metric, M2N=M2N)
+                    # reward, pred_cp, done, _, _ = generate_F1(logits, action, batch, time = time, is_train = False, eval_metric=eval_metric, M2N=M2N)
+                    reward, pred_cp, done, pred_ans, top_pred_ans = generate_F1(logits, action, batch, time = time, is_train = False, eval_metric=eval_metric, M2N=M2N)
+                    #print("dev batch 3: {}".format(batch))
+                    print("len pred_ans: {}".format(len(pred_ans)))
+                    print("pred_ans: {}".format(pred_ans))
+                    
                     update_train_instance(batch, action)
-
+                    print("dev batch 4: {}".format(batch))
+                    input()
                     if done: break
                     time += 1
-
+                print("dev batch 5: {}".format(batch))
+                print("batch.candidate_answers: {}.".format(batch.candidate_answers))
+                input()
                 if not skip_forward:
                     eval_reward += np.mean(reward)
                     nb_eval_examples += 1
                     nb_eval_steps += 1
                 batch.reset()
+                #print("dev batch 5: {}".format(batch))
                 #print(logits); exit()
             result = {'training loss': tr_loss/np.max([nb_tr_examples, 1.e-10]),
                       'training reward': tr_reward/np.max([nb_tr_examples, 1.e-10]),
                       'dev reward': eval_reward/np.max([nb_eval_examples, 1.e-10])}
-            if tokenizer.dataset in ['CWQ', 'WBQ', 'CQ']: result['train reward boundary'] = tr_reward_boundary/np.max([nb_tr_examples, 1.e-10])
-            if tokenizer.dataset in ['CWQ']: result['training hop1 acc'] = hop1_tr_reward/np.max([nb_tr_examples, 1.e-10])
+            if tokenizer.dataset in ['CWQ', 'WBQ', 'CQ', 'METAQA2']: result['train reward boundary'] = tr_reward_boundary/np.max([nb_tr_examples, 1.e-10])
+            if tokenizer.dataset in ['CWQ', 'METAQA2']: result['training hop1 acc'] = hop1_tr_reward/np.max([nb_tr_examples, 1.e-10])
             if 'LM' in config.method: result['training LM loss'] = tr_LM_loss/np.max([nb_tr_examples, 1.e-10])
             eval_reward = eval_reward/np.max([nb_eval_examples, 1.e-10])
 
@@ -773,6 +825,9 @@ def main():
                 eval_reward, nb_eval_steps, nb_eval_examples, eval_pred_cps, eval_pred_top_ans, eval_reward_boundary = 0, 0, 0, [], [], 0
 
                 for eval_step, batch in enumerate(test_instances): #[328:329]
+                    print("test batch 6: {}".format(batch))
+                    print("batch.candidate_answers: {}.".format(batch.candidate_answers))
+                    
                     done, skip_forward, pred_cp = False, False, ''
                     time, reward, top_pred_ans = 0, [0], defaultdict(int)
                     #print(eval_step)
@@ -780,12 +835,17 @@ def main():
                         time1 = mytime.time()
                         cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, qr_n, done = retrieve_KB(batch, KB, QUERY, M2N, tokenizer, config.method, time = time)
                         query_num += qr_n
+                        print("test batch 7: {}".format(batch))
+                        print("batch.candidate_answers: {}.".format(batch.candidate_answers))
+                        
+                        # print(cp)
 
                         if len(cp) == 0:
                             skip_forward = True
                             break
                         ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, method=config.method)
                         if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
+                        print("test ready_batch: {}".format(ready_batch))
 
                         # Step through environment using chosen action
                         with torch.no_grad():
@@ -794,12 +854,27 @@ def main():
                         logits = _logits.cpu().data.numpy() if check_args_gpu_id else _logits.data.numpy()
                         adjust_F1s = torch.tensor(batch.current_F1s, dtype=torch.float).view(1, -1)
                         if check_args_gpu_id: _adjust_F1s = adjust_F1s.to(device)
+                        print("test batch 8: {}".format(batch))
+
 
                         _action, _ = select_action(policy, _logits, is_train=False, k=args.top_k, dataset=tokenizer.dataset) # adjust_F1s = _adjust_F1s,  if time < 2 else None
                         action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
-                        eval_metric = 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'Hits1' if (tokenizer.dataset in ['CWQ']) else 'F1'
+                        eval_metric = 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'Hits1' if (tokenizer.dataset in ['CWQ', 'METAQA2']) else 'F1'
                         reward, pred_cp, done, pred_ans, top_pred_ans = generate_F1(logits, action, batch, time = time, is_train = False, eval_metric=eval_metric, M2N=M2N, top_pred_ans=top_pred_ans)
+                        print("test batch 9: {}".format(batch))
+
+
+                        #print("current batch: {}".format(batch))
+                        #print("batch.candidate_answers: {}.".format(batch.candidate_answers))
+                        #print("batch.answer: {}.".format(batch.answer))
+                        #print("candidate ans: {}".format(batch.candidate_answers))
+                        #print("reward: {}".format(reward))
+                        #print("pred_ans: {}".format(pred_ans))
+                        #print("top_pred_ans: {}".format(top_pred_ans))
+                        #input()
+
                         update_train_instance(batch, action)
+                        print("test batch 10: {}".format(batch))
                         if done: break
                         time += 1
                     #if len(pred_cp.split(' ')) < 2: print(eval_step); exit()
@@ -815,11 +890,13 @@ def main():
                         nb_eval_steps += 1
                     batch.reset()
                     #print('max reward', np.max(batch.orig_F1s), '\n')
+                    print("test batch 11: {}".format(batch))
 
                 result['test reward'] = eval_reward/np.max([nb_eval_examples, 1.e-10])
                 result['query times'] = '%s (save model) ' %(query_num)
                 if args.do_eval == 2: print(result); exit()
-                if tokenizer.dataset in ['CWQ', 'WBQ', 'CQ']: result['test reward boundary'] = eval_reward_boundary/np.max([nb_eval_examples, 1.e-10])
+                if tokenizer.dataset in ['CWQ', 'WBQ', 'CQ', 'METAQA2']: result['test reward boundary'] = eval_reward_boundary/np.max([nb_eval_examples, 1.e-10])
+                print("predcp: {}".format(eval_pred_cps))
                 g = open(save_eval_cp_file, "w")
                 g.write('\n'.join(eval_pred_cps))
                 g.close()

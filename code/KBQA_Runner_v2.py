@@ -487,7 +487,8 @@ def update_policy(adjust_loss, policy, optimizer, batch, device = None, LM_loss 
         raw_rewards.insert(0, R)
 
     # Scale rewards
-    rewards = torch.FloatTensor(raw_rewards).transpose(1, 0)
+    # rewards = torch.FloatTensor(raw_rewards).transpose(1, 0)
+    rewards = torch.FloatTensor(np.array(raw_rewards)).transpose(1, 0)
     # rewards = rewards if len(raw_rewards) == 1 else (rewards-rewards.mean(-1).view(-1, 1)) / (rewards.std(-1).view(-1, 1)+np.finfo(np.float32).eps)
     #print(rewards)
     if device: rewards = Variable(rewards).to(device)
@@ -542,32 +543,27 @@ def main():
     parser.add_argument("--adjust_F1_weight", default=0.5, type=float, help="weight of adjust F1 score during training")
     parser.add_argument("--train_limit_number", default=150, type=int, help="the number of training instances")
     parser.add_argument("--max_hop_num", default=1, type=int, help="maximum hop number")
+    parser.add_argument("--cpu_only", default="no", type=str, help="use cpu only if yes")
     parser.add_argument("--do_policy_gradient", default=1, type=int, help="Whether to train with policy gradient. 1: use policy gradient; 2: use maximum likelihood with beam")
     args = parser.parse_args()
 
-    # # tests
-    # print("----------------------------")
-    # print("[lily] tests:")
-    # print(torch.cuda.is_available())
-    # print(torch.cuda.device_count())
-    # print(torch.cuda.current_device())
-    # print("----------------------------")
     
-    check_args_gpu_id = False
-    if isinstance(args.gpu_id, int): check_args_gpu_id = True
+    if isinstance(args.gpu_id, int): 
+        check_args_gpu_id = True
+    else: 
+        check_args_gpu_id = False
 
-
-    if torch.cuda.is_available():
-        logger.info("cuda {} is available".format(args.gpu_id))
-        print("torch.version.cuda: {}".format(torch.version.cuda))
-        print("torch.cuda.device_count(): {}".format(torch.cuda.device_count()))
-        print("torch.cuda.current_device(): {}".format(torch.cuda.current_device()))
-        device = torch.device("cuda", args.gpu_id) #
-        n_gpu = 1
-    else:
+    if args.cpu_only=="yes":
         device = None
-        logger.info("cuda is unavailable")
-
+        logger.info("using only cpu")
+    else:
+        if torch.cuda.is_available():
+            logger.info("cuda {} is available".format(args.gpu_id))
+            device = torch.device("cuda", args.gpu_id) #
+            n_gpu = 1
+        else:
+            device = None
+            logger.info("cuda is unavailable")
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -737,11 +733,10 @@ def main():
                     if len(cp) == 0: skip_forward = True; break
                     ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, method=config.method)
                     if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
-                    
+
                     # Step through environment using chosen action
                     with torch.no_grad():
                         _logits, _ = policy(ready_batch, None)
-                        print(_logits, _)
                     logits = _logits.cpu().data.numpy() if check_args_gpu_id else _logits.data.numpy()
 
                     _action, _ = select_action(policy, _logits, is_train=False, k=args.top_k, dataset=tokenizer.dataset)

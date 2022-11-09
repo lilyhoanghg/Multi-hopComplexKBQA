@@ -545,29 +545,13 @@ def main():
     parser.add_argument("--do_policy_gradient", default=1, type=int, help="Whether to train with policy gradient. 1: use policy gradient; 2: use maximum likelihood with beam")
     args = parser.parse_args()
 
-    # # tests
-    # print("----------------------------")
-    # print("[lily] tests:")
-    # print(torch.cuda.is_available())
-    # print(torch.cuda.device_count())
-    # print(torch.cuda.current_device())
-    # print("----------------------------")
-    
-    check_args_gpu_id = False
-    if isinstance(args.gpu_id, int): check_args_gpu_id = True
-
-
     if torch.cuda.is_available():
         logger.info("cuda {} is available".format(args.gpu_id))
-        print("torch.version.cuda: {}".format(torch.version.cuda))
-        print("torch.cuda.device_count(): {}".format(torch.cuda.device_count()))
-        print("torch.cuda.current_device(): {}".format(torch.cuda.current_device()))
         device = torch.device("cuda", args.gpu_id) #
         n_gpu = 1
     else:
         device = None
         logger.info("cuda is unavailable")
-
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -605,7 +589,7 @@ def main():
     else:
         print("successfully initialize model ...")
     #print(policy.ranker.decoder.weight.data); exit()
-    if check_args_gpu_id:
+    if args.gpu_id:
         policy.to(device)
 
     global_step, max_eval_reward, t_total = 0, -0.1, 0
@@ -667,22 +651,22 @@ def main():
 
                     if len(cp) == 0: skip_forward = True; break # When there is no candidate paths for the question, skip
                     ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, is_train=True, method=config.method, save_model=args.save_model)
-                    if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
+                    if args.gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
 
                     # Step through environment using chosen action
                     _logits, _losses = policy(ready_batch, None)
                     _total_losses += _losses if _losses else 0
-                    logits = _logits.cpu().data.numpy() if check_args_gpu_id else _logits.data.numpy()
+                    logits = _logits.cpu().data.numpy() if args.gpu_id else _logits.data.numpy()
                     adjust_F1s = torch.tensor(batch.current_F1s, dtype=torch.float).view(1, -1)
                     F1s = torch.tensor(batch.F1s, dtype=torch.float).view(1, -1)
-                    if check_args_gpu_id: _adjust_F1s, _F1s = adjust_F1s.to(device), F1s.to(device)
+                    if args.gpu_id: _adjust_F1s, _F1s = adjust_F1s.to(device), F1s.to(device)
                     if torch.isnan(_logits).any() or (_logits.size()!= _adjust_F1s.size()): skip_forward = True; break # When there is a bug, skip
                     _action, _adjust_loss = select_action(policy, _logits, adjust_F1s = _adjust_F1s,
                                                           previous_action_num = batch.previous_action_num,
                                                           is_train=True, time = time, is_reinforce=args.do_policy_gradient,
                                                           dataset=tokenizer.dataset, adjust_F1_weight = args.adjust_F1_weight) #True
                     if args.do_policy_gradient ==2: loss= update_policy_immediately(_adjust_loss, optimizer)
-                    action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
+                    action = _action.cpu().data.numpy() if args.gpu_id else _action.data.numpy()
                     eval_metric = 'GraphAcc' if (time==0 and tokenizer.dataset in ['CWQ']) else 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
                     reward, _, done, _, _ = generate_F1(logits, action, batch, time = time, is_train=True, eval_metric=eval_metric, M2N=M2N)
                     if time== 0 and tokenizer.dataset in ['CWQ']: hop1_tr_reward += np.mean(reward)
@@ -736,16 +720,15 @@ def main():
 
                     if len(cp) == 0: skip_forward = True; break
                     ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, method=config.method)
-                    if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
-                    
+                    if args.gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
+
                     # Step through environment using chosen action
                     with torch.no_grad():
                         _logits, _ = policy(ready_batch, None)
-                        print(_logits, _)
-                    logits = _logits.cpu().data.numpy() if check_args_gpu_id else _logits.data.numpy()
+                    logits = _logits.cpu().data.numpy() if args.gpu_id else _logits.data.numpy()
 
                     _action, _ = select_action(policy, _logits, is_train=False, k=args.top_k, dataset=tokenizer.dataset)
-                    action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
+                    action = _action.cpu().data.numpy() if args.gpu_id else _action.data.numpy()
                     eval_metric = 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
                     reward, pred_cp, done, _, _ = generate_F1(logits, action, batch, time = time, is_train = False, eval_metric=eval_metric, M2N=M2N)
                     update_train_instance(batch, action)
@@ -785,18 +768,18 @@ def main():
                             skip_forward = True
                             break
                         ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, method=config.method)
-                        if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
+                        if args.gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
 
                         # Step through environment using chosen action
                         with torch.no_grad():
                             _logits, _ = policy(ready_batch, None)
                             _logits = F.softmax(_logits, 1)
-                        logits = _logits.cpu().data.numpy() if check_args_gpu_id else _logits.data.numpy()
+                        logits = _logits.cpu().data.numpy() if args.gpu_id else _logits.data.numpy()
                         adjust_F1s = torch.tensor(batch.current_F1s, dtype=torch.float).view(1, -1)
-                        if check_args_gpu_id: _adjust_F1s = adjust_F1s.to(device)
+                        if args.gpu_id: _adjust_F1s = adjust_F1s.to(device)
 
                         _action, _ = select_action(policy, _logits, is_train=False, k=args.top_k, dataset=tokenizer.dataset) # adjust_F1s = _adjust_F1s,  if time < 2 else None
-                        action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
+                        action = _action.cpu().data.numpy() if args.gpu_id else _action.data.numpy()
                         eval_metric = 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'Hits1' if (tokenizer.dataset in ['CWQ']) else 'F1'
                         reward, pred_cp, done, pred_ans, top_pred_ans = generate_F1(logits, action, batch, time = time, is_train = False, eval_metric=eval_metric, M2N=M2N, top_pred_ans=top_pred_ans)
                         update_train_instance(batch, action)
