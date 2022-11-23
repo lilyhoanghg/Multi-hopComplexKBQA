@@ -17,7 +17,10 @@ special1hoprel = set(["ns:base.aareas.schema.administrative_area.short_name",
                       "ns:type.object.name",
                       "ns:base.schemastaging.context_name.nickname"])
 
-SPARQLPATH = "your/path/to/database"
+SPARQLPATH = "http://localhost:7200/repositories/repo-test-1"
+# PREFIX = "PREFIX wm: <http://www.semanticweb.org/wikimovies#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>"
+SHORT_PREFIX = "wm"
+PREFIX = "PREFIX {}: <http://www.semanticweb.org/wikimovies#>".format(SHORT_PREFIX)
 
 def test():
     try:
@@ -263,34 +266,65 @@ def SQL_query(p):
         pass
     return answer
 
-def SQL_1hop(p, QUERY=None):
+def SQL_1hop(p, QUERY=None, topic=None, verbose=False):
     kbs, sparql_txts = defaultdict(set), set()
     trips, t_idx, _ = form_trips(p)
-    topic = re.findall('^ns\:[mg]\.[^ ]+', trips[0])[0]
+    if verbose: print("[SQL_1hop] trips, t_idx: {}, {}".format(trips, t_idx))
+    if topic: topic = topic
+    else:
+        try:
+            topic = re.findall('^ns\:[mg]\.[^ ]+', trips[0])[0] # this is a very Freebase specific method to find topic entities.
+        except:
+            topic = re.findall('[\w\.-]+movie[\w\.-]+', trips[0])[0] # an attempt at translating to metaqa 2.0
+    if verbose: print("[SQL_1hop] topic: {}".format(topic))
     query = (' '.join(['%s' %topic, '?r', '?e%s' %(t_idx+1)]), ) if t_idx == 0 else (' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )
     trips = '.\n'.join(query) if t_idx == 0 else '.\n'.join(trips + query)
-    retu = ', '.join(['?r', '?e%s' %(t_idx+1)])
-    const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s) OR lang(?e%s) = '' OR langMatches(lang(?e%s), 'en'))" %((t_idx+1, topic)+(t_idx+1, )*3)
-    for const1_idx, const1 in enumerate(["?e%s ns:type.object.name ?name." %(t_idx+1), "FILTER (datatype(?e%s) in (xsd:date, xsd:gYear))" %(t_idx+1), "VALUES ?r {%s}" %(' '.join(special1hoprel))]): #
+    # retu = ', '.join(['?r', '?e%s' %(t_idx+1)])
+    retu = ' '.join(['?r', '?e%s' % (t_idx + 1)])
+    # const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s) OR lang(?e%s) = '' OR langMatches(lang(?e%s), 'en'))" %((t_idx+1, topic)+(t_idx+1, )*3)
+    const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s))" %((t_idx+1, topic)+(t_idx+1, ))
+    # print("trips, t_idx: {}, {}".format(trips, t_idx))
+    # print("topic: {}".format(topic))
+    # print("query: {}".format(query))
+    # print("trips: {}".format(trips))
+    # print("retu: {}".format(retu))
+    # for const1_idx, const1 in enumerate(["?e%s ns:type.object.name ?name." %(t_idx+1), "FILTER (datatype(?e%s) in (xsd:date, xsd:gYear))" %(t_idx+1), "VALUES ?r {%s}" %(' '.join(special1hoprel))]): #
+    for const1_idx, const1 in enumerate(["?e%s rdfs:label ?name." % (t_idx + 1),
+                                         "FILTER (datatype(?e%s) in (xsd:date, xsd:gYear))" % (t_idx + 1),
+                                         "VALUES ?r {%s}" % (' '.join(special1hoprel))]):  #
+
+        # print("const1_idx: {}".format(const1_idx))
+        # print("const1: {}".format(const1))
         '''If const1_idx > 1, consider the name-mentioned relation'''
         if const1_idx > 1: const = ""
-        sparql_txt = """PREFIX ns:<http://rdf.freebase.com/ns/>\nSELECT %s WHERE {%s\n%s\n%s}""" %(retu, const, const1, trips) # Q: the order of the query matters ?!
+        # sparql_txt = """PREFIX ns:<http://rdf.freebase.com/ns/>\nSELECT %s WHERE {%s\n%s\n%s}""" %(retu, const, const1, trips) # Q: the order of the query matters ?!
+        sparql_txt = """%s\nSELECT %s WHERE {%s\n%s\n%s}""" %(PREFIX, retu, const, const1, trips) # Q: the order of the query matters ?!
         #print(sparql_txt)
+        # print("sparql_txt: {}".format(sparql_txt))
         sparql = SPARQLWrapper(SPARQLPATH)
         sparql.setQuery(sparql_txt)
         sparql.setReturnFormat(JSON)
         try:
-            if (QUERY is not None) and sparql_txt in QUERY: return kbs, sparql_txts
-            results = sparql.query().convert()
-            #print(len(results['results']['bindings']))
+            # print("trying")
+            if (QUERY is not None) and sparql_txt in QUERY:
+                # print("returning")
+                return kbs, sparql_txts
+            # results = sparql.query().convert()
+            results = sparql.queryAndConvert()
+            # print(results)
+            # print("querying")
+            # print(len(results['results']['bindings']))
             if results['results']['bindings']:
                 for t in results['results']['bindings']:
-                    r = t['r']['value'].split('/ns/')[-1] if re.search('^http', t['r']['value']) else t['r']['value']
-                    t = t['e%s' %(t_idx+1)]['value'].split('/ns/')[-1] if re.search('^http', t['e%s' %(t_idx+1)]['value']) else t['e%s' %(t_idx+1)]['value']
+                    # r = t['r']['value'].split('/ns/')[-1] if re.search('^http', t['r']['value']) else t['r']['value']
+                    r = "{}:{}".format(SHORT_PREFIX, t['r']['value'].split('#')[-1]) if re.search('^http', t['r']['value']) else t['r']['value']
+                    # t = t['e%s' %(t_idx+1)]['value'].split('/ns/')[-1] if re.search('^http', t['e%s' %(t_idx+1)]['value']) else t['e%s' %(t_idx+1)]['value']
+                    t = "{}:{}".format(SHORT_PREFIX, t['e%s' %(t_idx+1)]['value'].split('#')[-1]) if re.search('^http', t['e%s' %(t_idx+1)]['value']) else t['e%s' %(t_idx+1)]['value']
                     trip = ((p[0][0], r, '?e%s' %(t_idx+1)), ) if t_idx == 0 else (('?e%s' %t_idx, r, '?e%s' %(t_idx+1)), )
                     kbs[trip].add(t)
             sparql_txts.add(sparql_txt)
         except:
+            # print("passing")
             pass
     return kbs, sparql_txts
 
@@ -472,6 +506,11 @@ def retrieve_answer(p):
 if __name__ == '__main__': #m.0bpn2j', ['people.person.spouse_s', 'people.marriage.spouse
     #print(SQL_query("m.0f8l9c location.location.adjoin_s ?d1 ?d1 location.adjoining_relationship.adjoins ?e2"))
     #print([k for k in SQL_1hop((('m.0j0k', ), ), None)[0].items() if 'countries_within' in k[0][0][1]]) # "m.0dl567": 0.8043850674528722,
-    test()# , ('?d1', 'sports.sports_team_roster.from', '2003')
+    # test()# , ('?d1', 'sports.sports_team_roster.from', '2003')
     #print(SQL_1hop((('m.0wz6jjk', 'common.topic.notable_for', '?d1'), ('?d1', 'common.notable_for.notable_object', '?e2'))))
     #print(SQL_name2entity('The Jeff Probst Show'))
+
+    p = (('wm:movie15532',),)
+    # p = (('m.0wz6jjk',),)
+    path, query = SQL_1hop(p, QUERY=None, topic='wm:movie15532')
+    print(path, query)
