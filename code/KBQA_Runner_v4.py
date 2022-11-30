@@ -191,16 +191,16 @@ def check_answer(raw_answer):
 def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=1000, time = 0, is_train = False, save_model='SO',
                 verbose = False):
     '''Retrieve subgraphs from the KB based on current topic entities'''
-    if verbose:
-        print("[retrieve_KB] time: {}".format(time))
-        if len(KB) < 2: print("[retrieve_KB] KB: {}".format(KB))
+    # if verbose:
+    #     print("[retrieve_KB] time: {}".format(time))
+    #     if len(KB) < 2: print("[retrieve_KB] KB: {}".format(KB))
     te, c_te, hn = batch.topic_entity, batch.current_topic_entity, batch.hop_number
     # print("verbose: {}".format(verbose))
     if verbose:
         print("[retrieve_KB] te, c_te, hn: {}, {}, {}".format(te, c_te, hn))
         print("[retrieve_KB] tokenizer.dataset: {}".format(tokenizer.dataset))
         print("[retrieve_KB] len KB: {}".format(len(KB)))
-        if len(KB) < 2: print("KB: {}".format(KB))
+        # if len(KB) < 2: print("KB: {}".format(KB))
 
     raw_candidate_paths, paths, batch.orig_F1s = {}, {}, []
     hn_mark, query_num = 0, 0
@@ -225,31 +225,37 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         # if time:
         if tokenizer.dataset in ['CWQ'] and time < 2: #(tokenizer.dataset in ['CWQ'] and time < 2) or (len(paths) == 0 and time==0): #(tokenizer.dataset in ['CWQ'] and time < 2) or
             ''' Single hop relations, remove this when WBQ '''
-            path, query = SQL_1hop(previous_path, QUERY=QUERY, topic=list(te.keys())[0], verbose=verbose)
+            # path, query = SQL_1hop(previous_path, QUERY=QUERY, topic=list(te.keys())[0], verbose=verbose)
+            path, query = SQL_1hop(previous_path, QUERY=QUERY, verbose=verbose)
             if verbose: print("[retrieve_KB] path, query: {}, {}".format(path, query))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
             ''' 2 hop relations, remove this when WBQ''' # TODO: address this part later
-            # path, query = SQL_2hop(previous_path, QUERY=QUERY)
-            # if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
-        if time:
-            ''' Constraint relations via entities, time, min max'''
-            overlap_te = set([mid for mid in te if te[mid][1] == te[previous_path[0][0]][1]]) if tokenizer.dataset in ['CQ'] else set([mid for mid in sum(previous_path, ()) if re.search('^[mg]\.', mid)]) #
-            const = set(te.keys()) - overlap_te
-            #print(te); print(const); print(batch.const_time); print(batch.const_minimax); print(batch.const_type)
-            if len(const): path, query = SQL_1hop_reverse(previous_path, const, QUERY=QUERY) #
-            if len(const) and query: raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
-            # if len(const): path, query = SQL_2hop_reverse(previous_path, const, QUERY=QUERY)
-            # if len(const) and query: raw_paths.update(path); QUERY.update(query); query_num += 1
-            if batch.const_time: path, query = SQL_1hop_reverse(previous_path, batch.const_time, QUERY=QUERY)
-            if batch.const_time and query: raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
-            if batch.const_minimax: path, query = SQL_1hop_reverse(previous_path, batch.const_minimax, QUERY=QUERY)
-            if batch.const_minimax and query: raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)#
-            ''' Constraint relations via types'''
-            const = set(batch.const_type)
-            if len(const): path, query = SQL_1hop_type(previous_path, const, QUERY=QUERY)
-            if len(const) and query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
-            if time:
-                for raw_path in copy.deepcopy(raw_paths): raw_paths[previous_path + raw_path] = raw_paths.pop(raw_path)
+            path, query = SQL_2hop(previous_path, QUERY=QUERY)
+            if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+
+        '''
+        Block below commented on 30 nov 2022.
+        '''
+        # if time:
+        #     ''' Constraint relations via entities, time, min max'''
+        #     overlap_te = set([mid for mid in te if te[mid][1] == te[previous_path[0][0]][1]]) if tokenizer.dataset in ['CQ'] else set([mid for mid in sum(previous_path, ()) if re.search('^[mg]\.', mid)]) #
+        #     const = set(te.keys()) - overlap_te
+        #     #print(te); print(const); print(batch.const_time); print(batch.const_minimax); print(batch.const_type)
+        #     if len(const): path, query = SQL_1hop_reverse(previous_path, const, QUERY=QUERY) #
+        #     if len(const) and query: raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+        #     # if len(const): path, query = SQL_2hop_reverse(previous_path, const, QUERY=QUERY)
+        #     # if len(const) and query: raw_paths.update(path); QUERY.update(query); query_num += 1
+        #     if batch.const_time: path, query = SQL_1hop_reverse(previous_path, batch.const_time, QUERY=QUERY)
+        #     if batch.const_time and query: raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+        #     if batch.const_minimax: path, query = SQL_1hop_reverse(previous_path, batch.const_minimax, QUERY=QUERY)
+        #     if batch.const_minimax and query: raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)#
+        #     ''' Constraint relations via types'''
+        #     const = set(batch.const_type)
+        #     if len(const): path, query = SQL_1hop_type(previous_path, const, QUERY=QUERY)
+        #     if len(const) and query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
+        #     if time:
+        #         for raw_path in copy.deepcopy(raw_paths): raw_paths[previous_path + raw_path] = raw_paths.pop(raw_path)
+
         for raw_path in raw_paths: update_hierarchical_dic_with_set(KB, previous_path, raw_path, raw_paths[raw_path])
         if len(raw_paths) == 0 and (previous_path not in KB): KB[previous_path] = raw_paths
 
@@ -770,7 +776,7 @@ def main():
         if args.do_eval:
             policy.eval()
             eval_reward, nb_eval_steps, nb_eval_examples = 0, 0, 0
-            if args.do_eval == 2: dev_instances = dev_instances[:1]
+            # if args.do_eval == 2: dev_instances = dev_instances[:1]
 
             for eval_step, batch in enumerate(dev_instances):
                 done, skip_forward, pred_cp = False, False, ''
@@ -819,7 +825,7 @@ def main():
 
             if eval_reward >= max_eval_reward:
                 max_eval_reward = eval_reward
-                if args.do_eval == 2: test_instances = test_instances[:1]
+                # if args.do_eval == 2: test_instances = test_instances[:1]
                 eval_reward, nb_eval_steps, nb_eval_examples, eval_pred_cps, eval_pred_top_ans, eval_reward_boundary = 0, 0, 0, [], [], 0
 
                 for eval_step, batch in enumerate(test_instances): #[328:329]
