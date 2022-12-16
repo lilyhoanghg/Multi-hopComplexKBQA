@@ -2,6 +2,7 @@ import json
 from SPARQLWrapper import SPARQLWrapper, JSON
 import re
 from collections import defaultdict
+from metaqa_tools import *
 
 const2rel = {'largest': """ns:location.location.area ns:topic_server.population_number""",
              'biggest': """ns:location.location.area ns:topic_server.population_number""",
@@ -252,7 +253,7 @@ def SQL_query(p):
     retu = '?e%s' %(t_idx)
     const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s) OR lang(?e%s) = '' OR langMatches(lang(?e%s), 'en'))" %((t_idx, topic)+(t_idx, )*3)
     sparql_txt = """PREFIX ns:<http://rdf.freebase.com/ns/>\nSELECT %s WHERE {%s\n%s}""" %(retu, const, trips) # Q: the order of the query matters ?!
-    print(sparql_txt)
+    # print(sparql_txt)
     sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_txt)
     sparql.setReturnFormat(JSON)
@@ -431,6 +432,80 @@ def SQL_1hop_reverse(p, const_entities, QUERY=None):
                     h = t['e%s' %(t_idx+1)]['value'].split('/ns/')[-1] if re.search('^http', t['e%s' %(t_idx+1)]['value']) else t['e%s' %(t_idx+1)]['value']
                     r = t['r']['value'].split('/ns/')[-1] if re.search('^http', t['r']['value']) else t['r']['value']
                     t = t['e%s' %(t_idx)]['value'].split('/ns/')[-1] if re.search('^http', t['e%s' %(t_idx)]['value']) else t['e%s' %(t_idx)]['value']
+                    if const_type in ['mid']:
+                        #kbs[((h, r, '?e%s' %t_idx), )].add(t) if q_idx==0 else kbs[((h, r, '?d%s' %d_idx), )].add(t)
+                        kbs[(('?e%s' %t_idx, r, h), )].add(t) if q_idx==0 else kbs[(('?d%s' %d_idx, r, h), )].add(t)
+                    elif const_type in ['son', 'daughter']:
+                        kbs[((const_type, '?e%s' %t_idx, r, h), )].add(t) if q_idx==0 else kbs[((const_type, '?d%s' %d_idx, r, h), )].add(t)
+                    elif const_type in ['year']:
+                        kbs[(('?e%s' %t_idx, r, h), )].add(t) if q_idx==0 else kbs[(('?d%s' %d_idx, r, h), )].add(t)
+                    elif const_type in ['first', 'last', 'current']:
+                        kbs[((const_type, '?e%s' %t_idx, r, h), )].add(t) if q_idx==0 else kbs[((const_type, '?d%s' %d_idx, r, h), )].add(t)
+                    elif const_type in ['largest', 'most', 'predominant', 'biggest', 'major', 'warmest', 'tallest']:
+                        kbs[((const_type, '?e%s' %t_idx, r, h), )].add(t) if q_idx==0 else kbs[((const_type, '?d%s' %d_idx, r, h), )].add(t)
+            sparql_txts.add(sparql_txt)
+        except:
+            pass
+    return kbs, sparql_txts
+
+def SQL_1hop_reverse_v2(p, const_entities, QUERY=None):
+    kbs, const1, sparql_txts = defaultdict(set), '', set()
+    raw_trips, t_idx, d_idx = form_trips(p)
+    # if re.search('^[mg]\.', list(const_entities)[0]):
+    if is_wm_entity_name(list(const_entities)[0]):
+        const_type = 'mid'
+        # const_entiti = ['ns:%s' %e for e in const_entities]
+        const_entiti = ['{}:{}'.format(SHORT_PREFIX, e) for e in const_entities]
+        const = "VALUES ?e%s {%s}" %(t_idx+1, ' '.join(sorted(const_entiti)))
+        queries = [(' '.join(['?e%s' %(t_idx+1), '?r', '?e%s' %t_idx]), ), (' '.join(['?e%s' %(t_idx+1), '?r', '?d%s' %d_idx]), )] if d_idx else [(' '.join(['?e%s' %(t_idx+1), '?r', '?e%s' %t_idx]), )]
+        #queries = [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), ), (' '.join(['?d%s' %d_idx, '?r', '?e%s' %(t_idx+1)]), )] if d_idx else [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )]
+    '''
+    elif re.search('^\d', list(const_entities)[0]):
+        const_type = 'year'
+        year = int(list(const_entities)[0]) #  FILTER(datatype(?e%s) in (xsd:date, xsd:gYear) &&
+        #const = "?e%s < xsd:date('%s-01-01') && ?e%s >= xsd:date('%s-01-01'))" %(t_idx+1, year+1, t_idx+1, year)
+        const = "FILTER(?e%s >= xsd:date('%s-01-01') && ?e%s < xsd:date('%s-01-01'))" %(t_idx+1, year, t_idx+1, year+1)
+        queries = [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), ), (' '.join(['?d%s' %d_idx, '?r', '?e%s' %(t_idx+1)]), )] if d_idx else [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )]
+    elif list(const_entities)[0] in ['first', 'last', 'current', 'newly']:
+        const_type = list(const_entities)[0]
+        const = "FILTER (datatype(?e%s) in (xsd:date, xsd:gYear))" %(t_idx+1)
+        const1 = "ORDER BY xsd:datetime(?e%s)\nLIMIT 1" %(t_idx+1) if const_type in ['first'] else "ORDER BY DESC(xsd:datetime(?e%s))\nLIMIT 1" %(t_idx+1)
+        queries = [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), ), (' '.join(['?d%s' %d_idx, '?r', '?e%s' %(t_idx+1)]), )] if d_idx else [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )]
+    elif list(const_entities)[0] in ['largest', 'most', 'predominant', 'biggest', 'major', 'warmest', 'tallest']:
+        const_type = list(const_entities)[0]
+        const = "VALUES ?r {%s}" %const2rel[const_type]
+        const1 = "ORDER BY DESC(xsd:float(?e%s))\nLIMIT 1" %(t_idx+1)
+        queries = [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), ), (' '.join(['?d%s' %d_idx, '?r', '?e%s' %(t_idx+1)]), )] if d_idx else [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )]
+    elif list(const_entities)[0] in ['daughter', 'son']:
+        const_type = list(const_entities)[0]
+        const = "VALUES ?e%s {ns:m.05zppz}" %(t_idx+1) if const_type in ['son'] else "VALUES ?e%s {ns:m.02zsn}" %(t_idx+1)
+        queries = [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), ), (' '.join(['?d%s' %d_idx, '?r', '?e%s' %(t_idx+1)]), )] if d_idx else [(' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )]
+    '''
+    else:
+        raise Exception('SQL_1hop_reverse has wrong constraint format %s' %str(const_entities))
+
+    for q_idx, query in enumerate(queries):
+        trips = '.\n'.join(raw_trips + query)
+        retu = ', '.join(['?e%s' %(t_idx+1), '?r', '?e%s' %t_idx])
+        sparql_txt = """%s\nSELECT DISTINCT %s WHERE {%s\n%s}%s""" %(PREFIX, retu, trips, const, const1)
+        #print(sparql_txt)
+        sparql = SPARQLWrapper(SPARQLPATH)
+        sparql.setQuery(sparql_txt)
+        sparql.setReturnFormat(JSON)
+        try:
+            if (QUERY is not None) and sparql_txt in QUERY: continue
+            results = sparql.query().convert()
+            if results['results']['bindings']:
+                for t in results['results']['bindings']:
+                    # h = t['e%s' %(t_idx+1)]['value'].split('/ns/')[-1] if re.search('^http', t['e%s' %(t_idx+1)]['value']) else t['e%s' %(t_idx+1)]['value']
+                    # r = t['r']['value'].split('/ns/')[-1] if re.search('^http', t['r']['value']) else t['r']['value']
+                    # t = t['e%s' %(t_idx)]['value'].split('/ns/')[-1] if re.search('^http', t['e%s' %(t_idx)]['value']) else t['e%s' %(t_idx)]['value']
+                    h = t['e%s' % (t_idx + 1)]['value'].split('/')[-1] if re.search('^http', t['e%s' % (t_idx + 1)][
+                        'value']) else t['e%s' % (t_idx + 1)]['value']
+                    r = t['r']['value'].split('/')[-1] if re.search('^http', t['r']['value']) else t['r']['value']
+                    t = t['e%s' % (t_idx)]['value'].split('/')[-1] if re.search('^http',
+                                                                                   t['e%s' % (t_idx)]['value']) else \
+                    t['e%s' % (t_idx)]['value']
                     if const_type in ['mid']:
                         #kbs[((h, r, '?e%s' %t_idx), )].add(t) if q_idx==0 else kbs[((h, r, '?d%s' %d_idx), )].add(t)
                         kbs[(('?e%s' %t_idx, r, h), )].add(t) if q_idx==0 else kbs[(('?d%s' %d_idx, r, h), )].add(t)

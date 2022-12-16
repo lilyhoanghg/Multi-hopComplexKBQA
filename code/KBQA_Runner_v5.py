@@ -1,5 +1,5 @@
 '''
-Re-configured to run on MetaQA 2.0
+Address constraints on MetaQA 2.0
 '''
 import logging
 import time as mytime
@@ -17,6 +17,8 @@ from tool import *
 
 from tokenization import Tokenizer
 from ModelsRL import ModelConfig, Policy
+
+from metaqa_tools import *
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt = '%m/%d/%Y %H:%M:%S',
@@ -255,6 +257,19 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         #     if len(const) and query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
         #     if time:
         #         for raw_path in copy.deepcopy(raw_paths): raw_paths[previous_path + raw_path] = raw_paths.pop(raw_path)
+
+        '''
+        Add back entity constraint, from commented block above.
+        '''
+        if time:
+            ''' Constraint relations via entities'''
+            # overlap_te = set([mid for mid in sum(previous_path, ()) if re.search('^[mg]\.', mid)])
+            overlap_te = set([mid for mid in sum(previous_path, ()) if is_wm_entity_name(mid)])
+            const = set(te.keys()) - overlap_te
+            print(te); print(const); print(batch.const_time); print(batch.const_minimax); print(batch.const_type)
+            if len(const): path, query = SQL_1hop_reverse_v2(previous_path, const, QUERY=QUERY)
+            if len(const) and query: raw_paths.update(path); QUERY.update(query); query_num += 1
+
 
         for raw_path in raw_paths: update_hierarchical_dic_with_set(KB, previous_path, raw_path, raw_paths[raw_path])
         if len(raw_paths) == 0 and (previous_path not in KB): KB[previous_path] = raw_paths
