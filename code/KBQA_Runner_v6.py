@@ -1,8 +1,5 @@
 '''
-Address constraints on MetaQA 2.0
-Test for 3-hop QAs.
-
-Update tool and SPARQL_test to v2.
+query all 3-hop at once.
 '''
 import logging
 import time as mytime
@@ -16,7 +13,7 @@ from torch.autograd import Variable
 from tqdm import trange
 from torch.distributions import Categorical
 import torch.nn.functional as F
-from tool_v2 import *
+from tool_v3 import *
 
 from tokenization import Tokenizer
 from ModelsRL import ModelConfig, Policy
@@ -241,6 +238,10 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
             ''' 2 hop relations, remove this when WBQ''' # TODO: address this part later
             path, query = SQL_2hop(previous_path, QUERY=QUERY)
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+            '''[2023-02-08] 3-hop'''
+            path, query = SQL_3hop(previous_path, QUERY=QUERY)
+            if verbose and query: print("[retrieve_KB] SQL 3-hop path: {}, {}".format(len(path), path))
+            if query:  raw_paths.update(path); QUERY.update(query); query_num += 1  # QUERY_save.update(query)
 
         '''
         Block below commented on 30 nov 2022.
@@ -866,6 +867,7 @@ def main():
                     #print(eval_step)
                     while time < args.max_hop_num:
                         if verbose: print("[test instances] time: {}".format(time))
+                        # input()
                         time1 = mytime.time()
                         cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, qr_n, done = retrieve_KB(batch, KB, QUERY, M2N, tokenizer, config.method, time = time, verbose=verbose)
                         query_num += qr_n

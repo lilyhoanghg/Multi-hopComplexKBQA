@@ -1,6 +1,8 @@
-import json
+'''
+19 Jan 2023
+Update SQL_2hop function with new SPARQL.
+'''
 from SPARQLWrapper import SPARQLWrapper, JSON
-import re
 from collections import defaultdict
 from metaqa_tools import *
 
@@ -19,7 +21,8 @@ special1hoprel = set(["ns:base.aareas.schema.administrative_area.short_name",
                       "ns:base.schemastaging.context_name.nickname"])
 
 # SPARQLPATH = "http://localhost:7200/repositories/repo-test-1"
-SPARQLPATH = "http://localhost:7200/repositories/metaqa2_kb_v4_3"
+# SPARQLPATH = "http://localhost:7200/repositories/metaqa2_kb_v4_3"
+SPARQLPATH = "http://localhost:7200/repositories/metaqa2_kb_v4_4"
 # PREFIX = "PREFIX wm: <http://www.semanticweb.org/wikimovies#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>"
 SHORT_PREFIX = "wm"
 PREFIX = "PREFIX {}: <http://www.semanticweb.org/wikimovies#>".format(SHORT_PREFIX)
@@ -235,6 +238,23 @@ def form_trips(p_tokens):
     if d_idx < t_idx - 1: d_idx = 0 # if d is too far, unvalid it
     return trips, t_idx, d_idx
 
+def form_trips_metaqa(p_tokens):
+    t_idx, d_idx = 0, 0
+    trips = ()
+    for p_token in p_tokens:
+        trip = ()
+        if len(p_token) > 3: p_token = p_token[1:]
+        for p_idx, e in enumerate(p_token):
+            # e = 'ns:%s' %e if (re.search('^[mg]\.', e) or len(e.split('.')) > 2) else "'%s'^^xsd:date" %e if (e.isdigit() and int(e) < 2100 or re.search('\d-\d', e)) else e
+            # e = 'wm:%s' %e if (re.search('^[a-z]+[0-9]+', e) else e
+            if re.search('^[a-z]+[0-9]+', e): e = 'wm:%s' %e
+            if re.search('^\?e', e): t_idx = int(re.findall('\d+', e)[0])
+            if re.search('^\?d', e): d_idx = int(re.findall('\d+', e)[0])
+            trip += (e, )
+        trips += (' '.join(trip), )
+    if d_idx < t_idx - 1: d_idx = 0 # if d is too far, unvalid it
+    return trips, t_idx, d_idx
+
 def SQL_query(p):
     new_p, p = [], p.split()
     s = 0
@@ -270,14 +290,17 @@ def SQL_query(p):
 
 def SQL_1hop(p, QUERY=None, topic=None, verbose=False):
     kbs, sparql_txts = defaultdict(set), set()
-    trips, t_idx, _ = form_trips(p)
+    trips, t_idx, _ = form_trips_metaqa(p)
     if verbose: print("[SQL_1hop] trips, t_idx: {}, {}".format(trips, t_idx))
     if topic: topic = topic
     else:
         # topic = re.findall('^ns\:[mg]\.[^ ]+', trips[0])[0] # this is a very Freebase specific method to find topic entities.
-        print("[SQL_1hop] trips, t_idx: {}, {}".format(trips, t_idx))
-        input()
-        topic = re.findall('^wm\:[a-z]+[0-9]+', trips[0])[0] # an attempt at translating to metaqa 2.0
+        # print("[SQL_1hop] trips, t_idx: {}, {}".format(trips, t_idx))
+        # input()
+        # topic = re.findall('^wm\:[a-z]+[0-9]+', trips[0])[0]  # an attempt at translating to metaqa 2.0
+        topic_list = re.findall('^wm\:[a-z]+[0-9]+', trips[0])
+        if len(topic_list) > 0: topic = topic_list[0]
+        else: return None, None
     if verbose: print("[SQL_1hop] topic: {}".format(topic))
     query = (' '.join(['%s' %topic, '?r', '?e%s' %(t_idx+1)]), ) if t_idx == 0 else (' '.join(['?e%s' %t_idx, '?r', '?e%s' %(t_idx+1)]), )
     trips = '.\n'.join(query) if t_idx == 0 else '.\n'.join(trips + query)
@@ -328,16 +351,21 @@ def SQL_1hop(p, QUERY=None, topic=None, verbose=False):
         except:
             # print("passing")
             pass
-    print("[SQL_1hop] kbs: {}".format(kbs))
+    # print("[SQL_1hop] kbs: {}".format(kbs))
     return kbs, sparql_txts
 
 def SQL_2hop(p, QUERY=None):
     kbs, sparql_txts = defaultdict(set), set()
-    trips, t_idx, _ = form_trips(p)
+    trips, t_idx, _ = form_trips_metaqa(p)
     # topic = re.findall('^ns\:[mg]\.[^ ]+', trips[0])[0]
-    topic = re.findall('^wm\:[a-z]+[0-9]+', trips[0])[0]
-    print("[SQL_2hop] trips, t_idx: {}, {}".format(trips, t_idx))
-    input()
+    # topic = re.findall('^wm\:[a-z]+[0-9]+', trips[0])[0]
+    topic_list = re.findall('^wm\:[a-z]+[0-9]+', trips[0])
+    if len(topic_list) > 0:
+        topic = topic_list[0]
+    else:
+        return None, None
+    # print("[SQL_2hop] trips, t_idx: {}, {}".format(trips, t_idx))
+    # input()
     '''
     test zone
     '''
@@ -357,7 +385,8 @@ def SQL_2hop(p, QUERY=None):
     # const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s) OR lang(?e%s) = '' OR langMatches(lang(?e%s), 'en'))." %((t_idx+2, topic)+(t_idx+2, )*3)
     const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s))." %((t_idx+2, topic)+(t_idx+2, ))
     # const1 = "MINUS {?d%s ns:type.object.name ?name.}." %(t_idx+1)
-    const1 = "MINUS {?d%s rdfs:label ?name.}." % (t_idx + 1) # metaqa 2.0
+    # const1 = "MINUS {?d%s rdfs:label ?name.}." % (t_idx + 1) # metaqa 2.0
+    const1 = "FILTER (?r!=rdf:type). FILTER (?r1!=rdf:type)."  # metaqa 2.0, 19 Jan 2023
     # sparql_txt = """PREFIX ns:<http://rdf.freebase.com/ns/>\nSELECT %s WHERE {%s\n%s\n%s}""" %(retu, const, const1, trips)
     sparql_txt = """%s\nSELECT %s WHERE {%s\n%s\n%s}""" % (
     PREFIX, retu, const, const1, trips) # metaqa 2.0
@@ -388,17 +417,22 @@ def SQL_2hop(p, QUERY=None):
         sparql_txts.add(sparql_txt)
     except:
         pass
-    print("[SQL_2hop] kbs: {}".format(kbs))
-    print("[SQL_2hop] sparql_txts: {}".format(sparql_txts))
+    # print("[SQL_2hop] kbs: {}".format(kbs))
+    # print("[SQL_2hop] sparql_txts: {}".format(sparql_txts))
     return kbs, sparql_txts
 
 def SQL_3hop(p, QUERY=None):
     kbs, sparql_txts = defaultdict(set), set()
     trips, t_idx, _ = form_trips(p)
     # topic = re.findall('^ns\:[mg]\.[^ ]+', trips[0])[0]
-    topic = re.findall('^wm\:[a-z]+[0-9]+', trips[0])[0]
-    print("[SQL_2hop] trips, t_idx: {}, {}".format(trips, t_idx))
-    input()
+    # topic = re.findall('^wm\:[a-z]+[0-9]+', trips[0])[0]
+    topic_list = re.findall('^wm\:[a-z]+[0-9]+', trips[0])
+    if len(topic_list) > 0:
+        topic = topic_list[0]
+    else:
+        return None, None
+    # print("[SQL_2hop] trips, t_idx: {}, {}".format(trips, t_idx))
+    # input()
     '''
     test zone
     '''
@@ -411,19 +445,23 @@ def SQL_3hop(p, QUERY=None):
     '''
     end test zone
     '''
-    query = (' '.join(['%s' %topic, '?r', '?d%s' %(t_idx+1)]), ) if t_idx == 0 else (' '.join(['?e%s' %t_idx, '?r', '?d%s' %(t_idx+1)]), )
-    query += (' '.join(['?d%s' %(t_idx+1), '?r1', '?e%s' %(t_idx+2)]), )
-    trips = '.\n'.join(query) if t_idx == 0 else '.\n'.join(trips + query)
-    retu = ' '.join(['?r', '?r1', '?e%s' %(t_idx+2)])
+    query = (' '.join(['%s' %topic, '?r', '?d%s' %(t_idx+1)]), )
+    query += (' '.join(['?d%s' %(t_idx+1), '?r1', '?d%s' %(t_idx+2)]), )
+    query += (' '.join(['?d%s' % (t_idx + 2), '?r2', '?e%s' % (t_idx + 3)]),)
+    # trips = '.\n'.join(query) if t_idx == 0 else '.\n'.join(trips + query)
+    trips = '.\n'.join(query)
+    retu = ' '.join(['?r', '?r1', '?r2' '?e%s' %(t_idx+3)])
     # const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s) OR lang(?e%s) = '' OR langMatches(lang(?e%s), 'en'))." %((t_idx+2, topic)+(t_idx+2, )*3)
-    const = "FILTER (?e%s!=%s)\nFILTER (!isLiteral(?e%s))." %((t_idx+2, topic)+(t_idx+2, ))
+    const = "FILTER (?d%s!=%s)\nFILTER (!isLiteral(?d%s))." %((t_idx+2, topic)+(t_idx+2, ))
     # const1 = "MINUS {?d%s ns:type.object.name ?name.}." %(t_idx+1)
-    const1 = "MINUS {?d%s rdfs:label ?name.}." % (t_idx + 1) # metaqa 2.0
+    # const1 = "MINUS {?d%s rdfs:label ?name.}." % (t_idx + 1) # metaqa 2.0
+    const1 = "FILTER (?r!=rdf:type). FILTER (?r1!=rdf:type). FILTER (?r2!=rdf:type)."  # metaqa 2.0, 19 Jan 2023
     # sparql_txt = """PREFIX ns:<http://rdf.freebase.com/ns/>\nSELECT %s WHERE {%s\n%s\n%s}""" %(retu, const, const1, trips)
     sparql_txt = """%s\nSELECT %s WHERE {%s\n%s\n%s}""" % (
     PREFIX, retu, const, const1, trips) # metaqa 2.0
     # print(sparql_txt)
     # input()
+    # print("[SQL_3hop] sparql_txt: {}".format(sparql_txt))
     sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_txt)
     sparql.setReturnFormat(JSON)
@@ -449,7 +487,8 @@ def SQL_3hop(p, QUERY=None):
         sparql_txts.add(sparql_txt)
     except:
         pass
-    print("[SQL_2hop] kbs: {}".format(kbs))
+    # print("[SQL_2hop] kbs: {}".format(kbs))
+
     return kbs, sparql_txts
 
 def SQL_1hop_reverse(p, const_entities, QUERY=None):
@@ -677,5 +716,15 @@ if __name__ == '__main__': #m.0bpn2j', ['people.person.spouse_s', 'people.marria
 
     p = (('wm:movie15532',),)
     # p = (('m.0wz6jjk',),)
-    path, query = SQL_1hop(p, QUERY=None, topic='wm:movie15532')
-    print(path, query)
+    # path, query = SQL_1hop(p, QUERY=None, topic='wm:movie15532')
+    path, query = SQL_1hop(p, QUERY=None, topic=None)
+    path2, query2 = SQL_2hop(p, QUERY=None)
+    print(path)
+    # input()
+    # print(path2)
+    # input()
+
+    # simulate time = 1: second iteration
+    for prev_path in set(query.values()):
+        path3, query3 = SQL_1hop(path)
+        print(path3)

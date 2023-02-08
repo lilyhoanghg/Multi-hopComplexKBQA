@@ -16,12 +16,16 @@ from torch.autograd import Variable
 from tqdm import trange
 from torch.distributions import Categorical
 import torch.nn.functional as F
-from tool_v2 import *
+from tool_v3 import *
 
 from tokenization import Tokenizer
 from ModelsRL import ModelConfig, Policy
 
 from metaqa_tools import *
+
+import pprint
+
+pp = pprint.PrettyPrinter(indent=4)
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt = '%m/%d/%Y %H:%M:%S',
@@ -206,13 +210,15 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         print("[retrieve_KB] tokenizer.dataset: {}".format(tokenizer.dataset))
         print("[retrieve_KB] len KB: {}".format(len(KB)))
         # if len(KB) < 2: print("KB: {}".format(KB))
-
+    input()
     raw_candidate_paths, paths, batch.orig_F1s = {}, {}, []
     hn_mark, query_num = 0, 0
     if time > 0:
         for h_idx, h in enumerate(c_te):
             update_raw_candidate_paths(c_te[h], [h], c_te[h], raw_candidate_paths, batch, time)
         batch.previous_action_num = len(raw_candidate_paths)
+        if verbose:
+            print("[retrieve_KB] te, c_te, hn: {}, {}, {}".format(te, c_te, hn))
     for previous_path in set(c_te.values()):
         if verbose: print("[retrieve_KB] previous_path: {}".format(previous_path))
         raw_paths, queries = {}, set()
@@ -235,12 +241,19 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
             ''' Single hop relations, remove this when WBQ '''
             # path, query = SQL_1hop(previous_path, QUERY=QUERY, topic=list(te.keys())[0], verbose=verbose)
             path, query = SQL_1hop(previous_path, QUERY=QUERY, verbose=verbose)
-            if verbose: print("[retrieve_KB] path, query: {}, {}".format(path, query))
+            # if verbose: print("[retrieve_KB] SQL 1-hop path, query: {}, {}".format(path, query))
+            if verbose and query: print("[retrieve_KB] SQL 1-hop path: {}, {}".format(len(path), path))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
             # commented on 19 Jan 2023
             ''' 2 hop relations, remove this when WBQ''' # TODO: address this part later
             path, query = SQL_2hop(previous_path, QUERY=QUERY)
+            if verbose and query: print("[retrieve_KB] SQL 2-hop path: {}, {}".format(len(path), path))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+            '''[2023-02-08] 3-hop'''
+            path, query = SQL_3hop(previous_path, QUERY=QUERY)
+            if verbose and query: print("[retrieve_KB] SQL 3-hop path: {}, {}".format(len(path), path))
+            if query:  raw_paths.update(path); QUERY.update(query); query_num += 1  # QUERY_save.update(query)
+            input()
 
         '''
         Block below commented on 30 nov 2022.
@@ -287,16 +300,19 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         if len(raw_paths) == 0 and (previous_path not in KB): KB[previous_path] = raw_paths
 
         paths.update(raw_paths)
-        if verbose:
-            print("[retrieve_KB] KB: {}".format(KB))
-            print("[retrieve_KB] paths: {}".format(paths))
-            print("[retrieve_KB] path: {}".format(path))
-            print("[retrieve_KB] query: {}".format(query))
+
         for raw_path in paths:
             path = raw_path
             update_raw_candidate_paths(path, paths[raw_path], previous_path, raw_candidate_paths, batch, time)
 
-    if verbose: print("[retrieve_KB] raw_candidate_paths: {}".format(raw_candidate_paths))
+    if verbose:
+        print("[retrieve_KB] KB len: {}".format(len(KB)))
+        print("[retrieve_KB] paths len: {}".format(len(paths)))
+        print("[retrieve_KB] path len: {}".format(len(path)))
+        print("[retrieve_KB] query len: {}".format(len(query)))
+    input()
+
+    # if verbose: print("[retrieve_KB] raw_candidate_paths: {}".format(raw_candidate_paths))
     '''Process the candidate paths'''
     candidate_paths, topic_scores, topic_numbers, answer_numbers, type_numbers, superlative_numbers, year_numbers, hop_numbers, F1s, RAs = [], [], [], [], [], [], [], [], [], []
     max_cp_length, types = 0, []
@@ -627,7 +643,7 @@ def main():
     if isinstance(args.gpu_id, int): check_args_gpu_id = True
 
     # verbose = args.verbose
-    verbose = False
+    verbose = True
     # print("verbose: {}".format(verbose))
     # if verbose: print("verbose test ok.")
 
@@ -818,8 +834,10 @@ def main():
                     if verbose: print("[dev instances] time: {}".format(time))
                     if verbose:
                         print("[main] time: {}".format(time))
-                        print("[main] KB: {}".format(KB))
-                    cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, qr_n, done = retrieve_KB(batch, KB, QUERY, M2N, tokenizer, config.method, time = time)
+                        # print("[main] KB: {}".format(KB))
+                    input()
+                    cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, qr_n, done = retrieve_KB(batch, KB, QUERY, M2N, tokenizer, config.method, time = time,
+                                                                                               verbose=verbose)
                     query_num += qr_n
 
                     if len(cp) == 0: skip_forward = True; break

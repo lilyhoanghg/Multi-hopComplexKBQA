@@ -16,7 +16,7 @@ from torch.autograd import Variable
 from tqdm import trange
 from torch.distributions import Categorical
 import torch.nn.functional as F
-from tool_v2 import *
+from tool_v4 import *
 
 from tokenization import Tokenizer
 from ModelsRL import ModelConfig, Policy
@@ -236,10 +236,13 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
             # path, query = SQL_1hop(previous_path, QUERY=QUERY, topic=list(te.keys())[0], verbose=verbose)
             path, query = SQL_1hop(previous_path, QUERY=QUERY, verbose=verbose)
             if verbose: print("[retrieve_KB] path, query: {}, {}".format(path, query))
+            # print("[retrieve_KB] time: {}".format(time))
+            # print("[retrieve_KB] SQL 1-hop path len: {}".format(len(path)))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
             # commented on 19 Jan 2023
             ''' 2 hop relations, remove this when WBQ''' # TODO: address this part later
             path, query = SQL_2hop(previous_path, QUERY=QUERY)
+            # print("[retrieve_KB] SQL 2-hop path len: {}".format(len(path)))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
 
         '''
