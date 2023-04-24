@@ -1,5 +1,6 @@
 '''
-Re-configured to run on MetaQA 2.0
+Predecessor: KBQA_Runner_v9
+Changes: training eval using GraphAcc for every hop.
 '''
 import logging
 import time as mytime
@@ -13,7 +14,7 @@ from torch.autograd import Variable
 from tqdm import trange
 from torch.distributions import Categorical
 import torch.nn.functional as F
-from tool import *
+from tool_v6 import *
 
 from tokenization import Tokenizer
 from ModelsRL import ModelConfig, Policy
@@ -112,8 +113,11 @@ def create_instances(input_file, tokenizer, verbose = False):
             for line_idx, line in enumerate(f):
                 line = line.strip()
                 g = re.split('\t| ', line)
-                if input_file.split('_')[-1] in ['WBQ', 'CWQ']: g = [w for w in g if not re.search('^\?', w)]
+                # if input_file.split('_')[-1] in ['WBQ', 'CWQ']: 
+                g = [w for w in g if not re.search('^\?', w)]
                 golden_graphs.append(tuple(g))
+                # print(tuple(g))
+                # input()
 
     instances = []
     for q_idx, q in enumerate(questions):
@@ -195,7 +199,7 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
     #     print("[retrieve_KB] time: {}".format(time))
     #     if len(KB) < 2: print("[retrieve_KB] KB: {}".format(KB))
     te, c_te, hn = batch.topic_entity, batch.current_topic_entity, batch.hop_number
-
+    # print("verbose: {}".format(verbose))
     if verbose:
         print("[retrieve_KB] te, c_te, hn: {}, {}, {}".format(te, c_te, hn))
         print("[retrieve_KB] tokenizer.dataset: {}".format(tokenizer.dataset))
@@ -208,7 +212,6 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         for h_idx, h in enumerate(c_te):
             update_raw_candidate_paths(c_te[h], [h], c_te[h], raw_candidate_paths, batch, time)
         batch.previous_action_num = len(raw_candidate_paths)
-    print("c_te: {}".format(c_te))
     for previous_path in set(c_te.values()):
         if verbose: print("[retrieve_KB] previous_path: {}".format(previous_path))
         raw_paths, queries = {}, set()
@@ -224,18 +227,24 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         # input()
 
         # if time: # commented on 30 nov 2022.
-        if tokenizer.dataset in ['CWQ'] and time < 2: #(tokenizer.dataset in ['CWQ'] and time < 2) or (len(paths) == 0 and time==0): #(tokenizer.dataset in ['CWQ'] and time < 2) or
-        # if tokenizer.dataset in ['CWQ'] and time < 3: # 2023-02-14
-            print("[retrieve_KB] previous_path: {}".format(previous_path))
+        #(tokenizer.dataset in ['CWQ'] and time < 2) or (len(paths) == 0 and time==0): #(tokenizer.dataset in ['CWQ'] and time < 2) or
+        if tokenizer.dataset in ['CWQ']: # commented on 2023-02-09
+        # if tokenizer.dataset in ['CWQ']:
+            # print("time: {}".format(time))
             ''' Single hop relations, remove this when WBQ '''
             # path, query = SQL_1hop(previous_path, QUERY=QUERY, topic=list(te.keys())[0], verbose=verbose)
             path, query = SQL_1hop(previous_path, QUERY=QUERY, verbose=verbose)
+            # print("[retrieve_KB] 1-hop path: {}".format(path))
+            # input()
             if verbose: print("[retrieve_KB] path, query: {}, {}".format(path, query))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
-            ''' 2 hop relations, remove this when WBQ''' # TODO: address this part later
-            # commented on 2023-2-14 for testing:
-            path, query = SQL_2hop(previous_path, QUERY=QUERY)
-            if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+            # print("time={} [retrieve_KB] 1-hop path: {}".format(time, path))
+            # input()
+            ''' 2 hop relations, remove this when WBQ'''
+            # path, query = SQL_2hop(previous_path, QUERY=QUERY)
+            # print("[retrieve_KB] 2-hop path: {}".format(path))
+            # if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
+            # input()
 
         '''
         Block below commented on 30 nov 2022.
@@ -291,7 +300,8 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
                     if verbose: print("[retrieve_KB, CWQ_F1 > 0.5] w: {}".format(w))
                     p_tmp += (w, )
                     if re.search('\d+-\d+-\d+', w): w = w.split('-')[0] # When it's a datetime, only use year
-                    if re.search('^[mg]\.', w) or re.search(r"movie\w+", w) or re.search(r"entity\w+", w): # When it's a mid
+                    # if re.search('^[mg]\.', w) or re.search(r"movie\w+", w) or re.search(r"entity\w+", w): # When it's a mid
+                    if re.search('^[mg]\.', w) or "movie" in w or "entity" in w:  # When it's a mid
                         if w not in M2N: update_m2n(w, M2N)
                         if (w in M2N): path.append(M2N[w]) # 'e' #
                         topic_score += 0. if w not in te else te[w][0] if tokenizer.dataset in ['CQ'] else te[w] # if M2N[w] in batch.raw_question
@@ -728,6 +738,10 @@ def main():
                     ready_batch = select_field(batch.question, cp, ts, tn, ty_n, su_n, ye_n, an_n, hn, RAs, mcl, is_train=True, method=config.method, save_model=args.save_model)
                     if check_args_gpu_id: ready_batch = tuple(t.to(device) for t in ready_batch)
 
+                    # print("golden_graph: {}".format(batch.golden_graph))
+                    # print("candidate_paths: {}".format(batch.candidate_paths))
+                    # input()
+
                     # Step through environment using chosen action
                     _logits, _losses = policy(ready_batch, None)
                     _total_losses += _losses if _losses else 0
@@ -742,7 +756,9 @@ def main():
                                                           dataset=tokenizer.dataset, adjust_F1_weight = args.adjust_F1_weight) #True
                     if args.do_policy_gradient ==2: loss= update_policy_immediately(_adjust_loss, optimizer)
                     action = _action.cpu().data.numpy() if check_args_gpu_id else _action.data.numpy()
-                    eval_metric = 'GraphAcc' if (time==0 and tokenizer.dataset in ['CWQ']) else 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
+                    # Eval settings below changed on 2023-03-28, to prioritise graph accuracy.
+                    # eval_metric = 'GraphAcc' if (time==0 and tokenizer.dataset in ['CWQ']) else 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
+                    eval_metric = 'GraphAcc' if (tokenizer.dataset in ['CWQ', 'METAQA2']) else 'AnsAcc' if (tokenizer.dataset in ['FBQ']) else 'F1Text' if (tokenizer.dataset in ['CQ']) else 'F1'
                     reward, _, done, _, _ = generate_F1(logits, action, batch, time = time, is_train=True, eval_metric=eval_metric, M2N=M2N)
                     if time== 0 and tokenizer.dataset in ['CWQ']: hop1_tr_reward += np.mean(reward)
                     update_train_instance(batch, action)

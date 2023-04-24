@@ -1,5 +1,5 @@
 '''
-Re-configured to run on MetaQA 2.0
+Roll back to KBQA v4 with minor changes.
 '''
 import logging
 import time as mytime
@@ -13,7 +13,7 @@ from torch.autograd import Variable
 from tqdm import trange
 from torch.distributions import Categorical
 import torch.nn.functional as F
-from tool import *
+from tool_v5 import *
 
 from tokenization import Tokenizer
 from ModelsRL import ModelConfig, Policy
@@ -195,7 +195,7 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
     #     print("[retrieve_KB] time: {}".format(time))
     #     if len(KB) < 2: print("[retrieve_KB] KB: {}".format(KB))
     te, c_te, hn = batch.topic_entity, batch.current_topic_entity, batch.hop_number
-
+    # print("verbose: {}".format(verbose))
     if verbose:
         print("[retrieve_KB] te, c_te, hn: {}, {}, {}".format(te, c_te, hn))
         print("[retrieve_KB] tokenizer.dataset: {}".format(tokenizer.dataset))
@@ -208,7 +208,6 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         for h_idx, h in enumerate(c_te):
             update_raw_candidate_paths(c_te[h], [h], c_te[h], raw_candidate_paths, batch, time)
         batch.previous_action_num = len(raw_candidate_paths)
-    print("c_te: {}".format(c_te))
     for previous_path in set(c_te.values()):
         if verbose: print("[retrieve_KB] previous_path: {}".format(previous_path))
         raw_paths, queries = {}, set()
@@ -224,16 +223,16 @@ def retrieve_KB(batch, KB, QUERY, M2N, tokenizer, method, train_limit_number=100
         # input()
 
         # if time: # commented on 30 nov 2022.
-        if tokenizer.dataset in ['CWQ'] and time < 2: #(tokenizer.dataset in ['CWQ'] and time < 2) or (len(paths) == 0 and time==0): #(tokenizer.dataset in ['CWQ'] and time < 2) or
-        # if tokenizer.dataset in ['CWQ'] and time < 3: # 2023-02-14
-            print("[retrieve_KB] previous_path: {}".format(previous_path))
+        #(tokenizer.dataset in ['CWQ'] and time < 2) or (len(paths) == 0 and time==0): #(tokenizer.dataset in ['CWQ'] and time < 2) or
+        if tokenizer.dataset in ['CWQ'] and time < 2: # commented on 2023-02-09
+        # if tokenizer.dataset in ['CWQ']:
+            # print("time: {}".format(time))
             ''' Single hop relations, remove this when WBQ '''
             # path, query = SQL_1hop(previous_path, QUERY=QUERY, topic=list(te.keys())[0], verbose=verbose)
             path, query = SQL_1hop(previous_path, QUERY=QUERY, verbose=verbose)
             if verbose: print("[retrieve_KB] path, query: {}, {}".format(path, query))
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query) #
-            ''' 2 hop relations, remove this when WBQ''' # TODO: address this part later
-            # commented on 2023-2-14 for testing:
+            ''' 2 hop relations, remove this when WBQ'''
             path, query = SQL_2hop(previous_path, QUERY=QUERY)
             if query:  raw_paths.update(path); QUERY.update(query); query_num += 1 #QUERY_save.update(query)
 
